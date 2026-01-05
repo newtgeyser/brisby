@@ -24,10 +24,6 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Index provider Nym address (overrides config)
-    #[arg(long)]
-    index_provider: Option<String>,
-
     /// Use mock transport (for testing without Nym)
     #[arg(long)]
     mock: bool,
@@ -58,6 +54,10 @@ enum Commands {
         /// Maximum number of results
         #[arg(short, long, default_value = "20")]
         max_results: u32,
+
+        /// Index provider Nym address
+        #[arg(short, long)]
+        index_provider: String,
     },
 
     /// Download a file by its content hash
@@ -105,6 +105,10 @@ enum Commands {
         /// Also publish to index provider
         #[arg(short, long)]
         publish: bool,
+
+        /// Index provider Nym address (required if --publish is used)
+        #[arg(short, long)]
+        index_provider: Option<String>,
     },
 }
 
@@ -128,11 +132,11 @@ async fn main() -> Result<()> {
         Commands::Share { file } => {
             share_file(&file, &cli.data_dir).await?;
         }
-        Commands::Search { query, max_results } => {
+        Commands::Search { query, max_results, index_provider } => {
             search_files(
                 &query,
                 max_results,
-                cli.index_provider.as_deref(),
+                &index_provider,
                 cli.mock,
                 &cli.data_dir,
             )
@@ -160,11 +164,11 @@ async fn main() -> Result<()> {
         Commands::Init => {
             init_config().await?;
         }
-        Commands::Seed { file, publish } => {
+        Commands::Seed { file, publish, index_provider } => {
             start_seeding(
                 &file,
                 publish,
-                cli.index_provider.as_deref(),
+                index_provider.as_deref(),
                 cli.mock,
                 &cli.data_dir,
             )
@@ -214,13 +218,10 @@ async fn share_file(path: &str, data_dir: &str) -> Result<()> {
 async fn search_files(
     query: &str,
     max_results: u32,
-    index_provider: Option<&str>,
+    index_provider: &str,
     use_mock: bool,
     data_dir: &str,
 ) -> Result<()> {
-    let index_provider = index_provider
-        .ok_or_else(|| anyhow::anyhow!("Index provider address required. Use --index-provider"))?;
-
     tracing::info!("Searching for: {} (max {} results)", query, max_results);
     tracing::info!("Index provider: {}", index_provider);
 
