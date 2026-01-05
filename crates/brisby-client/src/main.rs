@@ -152,7 +152,7 @@ async fn main() -> Result<()> {
             .await?;
         }
         Commands::List => {
-            list_files().await?;
+            list_files(&cli.data_dir).await?;
         }
         Commands::Status => {
             show_status().await?;
@@ -524,9 +524,37 @@ async fn start_seeding(
     }
 }
 
-async fn list_files() -> Result<()> {
-    // TODO: Query local index
-    println!("List functionality not yet implemented");
+async fn list_files(data_dir: &str) -> Result<()> {
+    let data_path = expand_path(data_dir);
+    let chunks_dir = data_path.join("chunks");
+
+    if !chunks_dir.exists() {
+        println!("No shared files found.");
+        println!("Use 'brisby share <file>' to add files.");
+        return Ok(());
+    }
+
+    let mut store = seeder::ChunkStore::new(chunks_dir);
+    let loaded = store.load_all()?;
+
+    if loaded == 0 {
+        println!("No shared files found.");
+        println!("Use 'brisby share <file>' to add files.");
+        return Ok(());
+    }
+
+    println!("Shared files ({}):\n", loaded);
+
+    for metadata in store.list_files() {
+        println!("  {}", metadata.filename);
+        println!("    Hash:   {}", brisby_core::hash_to_hex(&metadata.content_hash));
+        println!("    Size:   {} bytes ({} chunks)", metadata.size, metadata.chunks.len());
+        if !metadata.keywords.is_empty() {
+            println!("    Keywords: {}", metadata.keywords.join(", "));
+        }
+        println!();
+    }
+
     Ok(())
 }
 
