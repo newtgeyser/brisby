@@ -39,7 +39,14 @@ impl Default for DhtConfig {
         Self {
             k: 20,
             alpha: 3,
-            node_id: [0u8; 32], // Should be set properly
+            node_id: generate_random_node_id(),
         }
     }
+}
+
+/// Generate a cryptographically random node ID
+pub fn generate_random_node_id() -> ContentHash {
+    let mut node_id = [0u8; 32];
+    getrandom::getrandom(&mut node_id).expect("Failed to generate random bytes");
+    node_id
 }

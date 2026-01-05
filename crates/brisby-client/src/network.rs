@@ -6,10 +6,22 @@ use anyhow::{anyhow, Result};
 use brisby_core::proto::{self, Envelope, Payload};
 use brisby_core::{NymAddress, Transport};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 use std::time::Duration;
 
-/// Request ID counter
-static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+/// Request ID counter, initialized with a random offset to avoid collisions across sessions
+static REQUEST_COUNTER: LazyLock<AtomicU64> = LazyLock::new(|| {
+    let mut buf = [0u8; 8];
+    // If getrandom fails, use current time as fallback
+    if getrandom::getrandom(&mut buf).is_err() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        return AtomicU64::new(ts);
+    }
+    AtomicU64::new(u64::from_le_bytes(buf))
+});
 
 /// Get a unique request ID
 pub fn next_request_id() -> u64 {
@@ -159,9 +171,9 @@ mod tests {
 
         let index_provider = NymAddress::new("test-index-provider");
 
-        // Queue a search response
+        // Queue a search response (request_id mismatch is logged but doesn't fail)
         let response = proto::search_response(
-            1, // Will match next_request_id()
+            0, // Doesn't need to match - mismatch is just logged
             vec![proto::SearchResult {
                 content_hash: vec![1u8; 32],
                 filename: "test.txt".to_string(),

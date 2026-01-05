@@ -4,6 +4,7 @@ use anyhow::Result;
 use brisby_core::Transport;
 use clap::Parser;
 use std::path::PathBuf;
+use std::time::Duration;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod handler;
@@ -11,6 +12,9 @@ mod search;
 
 use handler::MessageHandler;
 use search::SearchIndex;
+
+/// Cleanup interval for expired entries (1 hour)
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
 
 #[derive(Parser)]
 #[command(name = "brisby-index")]
@@ -68,6 +72,12 @@ async fn main() -> Result<()> {
     // Create message handler
     let handler = MessageHandler::new(index);
 
+    // Spawn cleanup task
+    let cleanup_index_path = index_path.clone();
+    let cleanup_handle = tokio::spawn(async move {
+        run_cleanup_task(&cleanup_index_path).await;
+    });
+
     if cli.mock {
         // Use mock transport for testing
         tracing::info!("Using mock transport (test mode)");
@@ -124,6 +134,44 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Cancel cleanup task
+    cleanup_handle.abort();
+
     tracing::info!("Shutting down");
     Ok(())
+}
+
+/// Run periodic cleanup of expired index entries
+async fn run_cleanup_task(index_path: &PathBuf) {
+    tracing::info!("Starting cleanup task (interval: {:?})", CLEANUP_INTERVAL);
+
+    loop {
+        tokio::time::sleep(CLEANUP_INTERVAL).await;
+
+        // Open a separate connection for cleanup
+        match SearchIndex::open(index_path) {
+            Ok(index) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                match index.cleanup_expired(now) {
+                    Ok(removed) => {
+                        if removed > 0 {
+                            tracing::info!("Cleanup: removed {} expired entries", removed);
+                        } else {
+                            tracing::debug!("Cleanup: no expired entries");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Cleanup failed: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to open index for cleanup: {}", e);
+            }
+        }
+    }
 }

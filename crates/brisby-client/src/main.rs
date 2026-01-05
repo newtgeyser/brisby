@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Share { file } => {
-            share_file(&file).await?;
+            share_file(&file, &cli.data_dir).await?;
         }
         Commands::Search { query, max_results } => {
             search_files(
@@ -175,8 +175,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn share_file(path: &str) -> Result<()> {
-    use brisby_core::chunk::chunk_file;
+async fn share_file(path: &str, data_dir: &str) -> Result<()> {
     use std::path::Path;
 
     let path = Path::new(path);
@@ -184,23 +183,30 @@ async fn share_file(path: &str) -> Result<()> {
         anyhow::bail!("File not found: {}", path.display());
     }
 
-    tracing::info!("Chunking file: {}", path.display());
-    let (metadata, chunks) = chunk_file(path)?;
+    // Set up chunk storage
+    let data_path = expand_path(data_dir);
+    std::fs::create_dir_all(&data_path)?;
+    let chunks_dir = data_path.join("chunks");
+
+    let mut store = seeder::ChunkStore::new(chunks_dir);
+
+    // Add file to chunk store (this chunks and stores locally)
+    tracing::info!("Processing file: {}", path.display());
+    let metadata = store.add_file(path)?;
 
     tracing::info!(
-        "File chunked: {} bytes, {} chunks",
+        "File stored: {} bytes, {} chunks",
         metadata.size,
-        chunks.len()
+        metadata.chunks.len()
     );
     tracing::info!("Content hash: {}", brisby_core::hash_to_hex(&metadata.content_hash));
 
-    // TODO: Store chunks locally
-    // TODO: Publish to index provider
-    // TODO: Announce to DHT
-
     println!("Shared: {}", metadata.filename);
     println!("Hash: {}", brisby_core::hash_to_hex(&metadata.content_hash));
-    println!("Size: {} bytes ({} chunks)", metadata.size, chunks.len());
+    println!("Size: {} bytes ({} chunks)", metadata.size, metadata.chunks.len());
+    println!();
+    println!("File is stored locally. To make it available on the network:");
+    println!("  brisby seed --publish --index-provider <ADDRESS>");
 
     Ok(())
 }

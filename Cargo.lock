@@ -546,6 +546,7 @@ dependencies = [
  "brisby-dht",
  "clap",
  "dirs 5.0.1",
+ "getrandom 0.2.16",
  "hex",
  "rusqlite",
  "serde",
@@ -580,6 +581,7 @@ version = "0.1.0"
 dependencies = [
  "bitvec",
  "brisby-core",
+ "getrandom 0.2.16",
  "thiserror 2.0.17",
  "tokio",
  "tracing",

@@ -45,6 +45,7 @@ toml = "0.8"
 bytes = "1"
 hex = "0.4"
 bitvec = "1"
+getrandom = "0.2"
 
 # Internal crates
 brisby-core = { path = "crates/brisby-core" }
