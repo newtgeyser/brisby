@@ -109,6 +109,7 @@ impl LocalIndex {
                     size: row.get::<_, i64>(2)? as u64,
                     chunk_count: row.get::<_, i64>(3)? as u32,
                     relevance: -row.get::<_, f64>(4)? as f32, // bm25 returns negative scores
+                    seeders: vec![], // Local index doesn't track seeders
                 })
             })?
             .collect::<Result<Vec<_>>>()?;

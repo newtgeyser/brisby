@@ -83,6 +83,8 @@ pub struct SearchResult {
     pub chunk_count: u32,
     #[prost(float, tag = "5")]
     pub relevance: f32,
+    #[prost(string, repeated, tag = "6")]
+    pub seeders: Vec<String>,
 }
 
 // Transfer messages

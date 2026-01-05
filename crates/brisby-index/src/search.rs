@@ -1,6 +1,6 @@
 //! Search index for the index provider
 
-use brisby_core::{ContentHash, IndexEntry, SearchResult};
+use brisby_core::{IndexEntry, SearchResult};
 use rusqlite::{params, Connection, Result};
 
 /// Search index for the index provider
@@ -88,7 +88,7 @@ impl SearchIndex {
     pub fn search(&self, query: &str, max_results: u32) -> Result<Vec<SearchResult>> {
         let mut stmt = self.conn.prepare(
             r#"
-            SELECT e.content_hash, e.filename, e.size, e.chunk_count, bm25(entries_fts) as rank
+            SELECT e.content_hash, e.filename, e.size, e.chunk_count, bm25(entries_fts) as rank, e.nym_address
             FROM entries_fts fts
             JOIN entries e ON e.rowid = fts.rowid
             WHERE entries_fts MATCH ?
@@ -104,6 +104,7 @@ impl SearchIndex {
                 if hash_bytes.len() == 32 {
                     content_hash.copy_from_slice(&hash_bytes);
                 }
+                let nym_address: String = row.get(5)?;
 
                 Ok(SearchResult {
                     content_hash,
@@ -111,6 +112,7 @@ impl SearchIndex {
                     size: row.get::<_, i64>(2)? as u64,
                     chunk_count: row.get::<_, i64>(3)? as u32,
                     relevance: -row.get::<_, f64>(4)? as f32,
+                    seeders: vec![nym_address],
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
@@ -178,5 +180,6 @@ mod tests {
         let results = index.search("movie", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].filename, "test_movie.mkv");
+        assert_eq!(results[0].seeders, vec!["test-nym-address"]);
     }
 }

@@ -68,6 +68,22 @@ enum Commands {
         /// Output path
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Seeder Nym address(es) to download from
+        #[arg(short, long, required = true)]
+        seeder: Vec<String>,
+
+        /// Expected number of chunks (from search results)
+        #[arg(short, long, default_value = "1")]
+        chunks: u32,
+
+        /// Expected filename
+        #[arg(short, long)]
+        filename: Option<String>,
+
+        /// Expected file size
+        #[arg(long)]
+        size: Option<u64>,
     },
 
     /// List locally shared files
@@ -110,8 +126,18 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Download { hash, output } => {
-            download_file(&hash, output.as_deref()).await?;
+        Commands::Download { hash, output, seeder, chunks, filename, size } => {
+            download_file(
+                &hash,
+                output.as_deref(),
+                &seeder,
+                chunks,
+                filename.as_deref(),
+                size,
+                cli.mock,
+                &cli.data_dir,
+            )
+            .await?;
         }
         Commands::List => {
             list_files().await?;
@@ -218,6 +244,9 @@ async fn search_files(
                     );
                     println!("   Hash: {}", brisby_core::hash_to_hex(&result.content_hash));
                     println!("   Relevance: {:.2}", result.relevance);
+                    if !result.seeders.is_empty() {
+                        println!("   Seeders: {}", result.seeders.len());
+                    }
                     println!();
                 }
             }
@@ -227,6 +256,8 @@ async fn search_files(
 
         #[cfg(not(feature = "nym"))]
         {
+            // Suppress unused variable warnings in non-nym build
+            let _ = (&index_addr, &data_dir);
             anyhow::bail!("Nym transport not available. Compile with --features nym or use --mock");
         }
     }
@@ -243,22 +274,103 @@ fn expand_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-async fn download_file(hash: &str, output: Option<&str>) -> Result<()> {
-    let content_hash = brisby_core::hex_to_hash(hash)
-        .map_err(|e| anyhow::anyhow!("Invalid hash: {}", e))?;
+async fn download_file(
+    hash: &str,
+    output: Option<&str>,
+    seeders: &[String],
+    chunk_count: u32,
+    filename: Option<&str>,
+    size: Option<u64>,
+    use_mock: bool,
+    data_dir: &str,
+) -> Result<()> {
+    use std::path::Path;
+
+    if seeders.is_empty() {
+        anyhow::bail!("At least one seeder address required. Use -s <address>");
+    }
+
+    let default_filename = format!("{}.download", &hash[..8]);
+    let output_filename = filename.unwrap_or(&default_filename);
+    let output_path = Path::new(output.unwrap_or(output_filename));
 
     tracing::info!("Downloading: {}", hash);
+    tracing::info!("From {} seeder(s)", seeders.len());
+    tracing::info!("Output: {}", output_path.display());
 
-    // TODO: Query DHT for seeders
-    // TODO: Request chunks from seeders
-    // TODO: Reassemble file
+    if use_mock {
+        println!("Mock mode: would download '{}' from {} seeder(s)", hash, seeders.len());
+        println!("(No real network connection in mock mode)");
+        return Ok(());
+    }
 
-    let output_path = output.unwrap_or("download");
-    println!("Download functionality not yet implemented");
-    println!("Hash: {}", hash);
-    println!("Output: {}", output_path);
+    #[cfg(feature = "nym")]
+    {
+        use brisby_core::{ChunkInfo, FileMetadata, NymTransport};
 
-    Ok(())
+        let content_hash = brisby_core::hex_to_hash(hash)
+            .map_err(|e| anyhow::anyhow!("Invalid hash: {}", e))?;
+
+        // Create a minimal FileMetadata for the downloader
+        // In a real scenario, we'd get full metadata from the index provider
+        let metadata = FileMetadata {
+            content_hash,
+            filename: output_filename.to_string(),
+            size: size.unwrap_or(chunk_count as u64 * brisby_core::CHUNK_SIZE as u64),
+            mime_type: None,
+            chunks: (0..chunk_count)
+                .map(|i| ChunkInfo {
+                    index: i,
+                    hash: [0u8; 32], // We verify chunks by their own hash in the response
+                    size: brisby_core::CHUNK_SIZE as u32,
+                })
+                .collect(),
+            keywords: vec![],
+            created_at: 0,
+        };
+
+        let data_path = expand_path(data_dir);
+        std::fs::create_dir_all(&data_path)?;
+        let nym_path = data_path.join("nym");
+
+        tracing::info!("Connecting to Nym network...");
+        let mut transport = NymTransport::with_storage(nym_path);
+        transport.connect().await?;
+
+        tracing::info!("Connected to Nym network");
+
+        let seeder_addresses: Vec<brisby_core::NymAddress> = seeders
+            .iter()
+            .map(|s| brisby_core::NymAddress::new(s))
+            .collect();
+
+        let dl = downloader::Downloader::new(&transport);
+
+        println!("Downloading {} chunks from {} seeder(s)...", chunk_count, seeders.len());
+
+        let chunks = dl
+            .download_sequential(&metadata, &seeder_addresses, |current, total| {
+                if current % 10 == 0 || current == total {
+                    println!("Progress: {}/{} chunks", current, total);
+                }
+            })
+            .await?;
+
+        dl.reassemble_to_file(chunks, &metadata, output_path)?;
+
+        println!("Downloaded successfully: {}", output_path.display());
+
+        transport.disconnect().await?;
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "nym"))]
+    {
+        // Suppress unused variable warnings in non-nym build
+        let _ = (&seeders, &chunk_count, &filename, &size, &data_dir);
+        anyhow::bail!("Nym transport not available. Compile with --features nym or use --mock");
+    }
 }
 
 async fn list_files() -> Result<()> {

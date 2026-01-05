@@ -147,6 +147,7 @@ impl MessageHandler {
                         size: r.size,
                         chunk_count: r.chunk_count,
                         relevance: r.relevance,
+                        seeders: r.seeders,
                     })
                     .collect();
 

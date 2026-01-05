@@ -78,6 +78,8 @@ pub struct SearchResult {
     pub chunk_count: u32,
     /// Relevance score (higher is better)
     pub relevance: f32,
+    /// Known seeders for this file
+    pub seeders: Vec<String>,
 }
 
 impl FileMetadata {

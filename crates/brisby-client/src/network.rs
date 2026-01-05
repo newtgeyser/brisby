@@ -3,7 +3,7 @@
 //! Handles connecting to the Nym mixnet and communicating with index providers.
 
 use anyhow::{anyhow, Result};
-use brisby_core::proto::{self, Envelope, Payload, SearchResponse};
+use brisby_core::proto::{self, Envelope, Payload};
 use brisby_core::{NymAddress, Transport};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -75,6 +75,7 @@ pub async fn search_index_provider<T: Transport>(
                         size: r.size,
                         chunk_count: r.chunk_count,
                         relevance: r.relevance,
+                        seeders: r.seeders,
                     })
                 })
                 .collect();
@@ -167,6 +168,7 @@ mod tests {
                 size: 1024,
                 chunk_count: 1,
                 relevance: 1.0,
+                seeders: vec!["test-seeder".to_string()],
             }],
         );
         transport.queue_message(ReceivedMessage::new(response.to_bytes(), None));

@@ -52,14 +52,14 @@ impl DownloadState {
 }
 
 /// Downloader for fetching files from the network
-pub struct Downloader<T: Transport> {
-    transport: T,
+pub struct Downloader<'a, T: Transport> {
+    transport: &'a T,
     request_counter: AtomicU64,
 }
 
-impl<T: Transport> Downloader<T> {
+impl<'a, T: Transport> Downloader<'a, T> {
     /// Create a new downloader
-    pub fn new(transport: T) -> Self {
+    pub fn new(transport: &'a T) -> Self {
         Self {
             transport,
             request_counter: AtomicU64::new(1),
@@ -299,7 +299,7 @@ mod tests {
         let mut transport = MockTransport::new();
         transport.connect().await.unwrap();
 
-        let downloader = Downloader::new(transport);
+        let downloader = Downloader::new(&transport);
         let seeder = NymAddress::new("seeder-address");
         let content_hash = [1u8; 32];
 
