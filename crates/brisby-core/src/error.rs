@@ -17,7 +17,7 @@ pub enum Error {
     Protocol(String),
 
     #[error("Version mismatch: expected {expected}, got {actual}")]
-    VersionMismatch { expected: u8, actual: u8 },
+    VersionMismatch { expected: u8, actual: u32 },
 
     #[error("Decode error: {0}")]
     Decode(#[from] prost::DecodeError),

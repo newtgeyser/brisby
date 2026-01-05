@@ -127,7 +127,7 @@ impl SearchIndex {
                 e.size,
                 e.chunk_count,
                 fts_matches.rank,
-                GROUP_CONCAT(s.nym_address) as seeders
+                GROUP_CONCAT(s.nym_address, '|') as seeders
             FROM (
                 SELECT rowid, bm25(entries_fts) as rank
                 FROM entries_fts
@@ -150,11 +150,11 @@ impl SearchIndex {
                     content_hash.copy_from_slice(&hash_bytes);
                 }
 
-                // Parse comma-separated seeder addresses
+                // Parse pipe-separated seeder addresses (pipe used to avoid issues with commas in addresses)
                 let seeders_str: Option<String> = row.get(5)?;
                 let seeders: Vec<String> = seeders_str
                     .map(|s| {
-                        s.split(',')
+                        s.split('|')
                             .map(|addr| addr.trim().to_string())
                             .filter(|addr| !addr.is_empty())
                             .collect()
@@ -180,10 +180,10 @@ impl SearchIndex {
     /// First removes seeders whose TTL has expired, then removes any entries
     /// that no longer have any seeders.
     pub fn cleanup_expired(&self, current_time: u64) -> Result<usize> {
-        // Delete expired seeders
+        // Delete expired seeders (using subtraction to avoid overflow in published_at + ttl)
         let expired_seeders = self.conn.execute(
-            "DELETE FROM seeders WHERE published_at + ttl < ?",
-            params![current_time as i64],
+            "DELETE FROM seeders WHERE ? >= published_at AND (? - published_at) >= ttl",
+            params![current_time as i64, current_time as i64],
         )?;
 
         // Delete entries with no remaining seeders

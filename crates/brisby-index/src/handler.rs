@@ -67,13 +67,6 @@ impl MessageHandler {
 
     /// Handle a publish request
     fn handle_publish(&self, request_id: u64, req: PublishRequest) -> Envelope {
-        tracing::info!(
-            "Publish request: {} ({} bytes, {} chunks)",
-            req.filename,
-            req.size,
-            req.chunk_count
-        );
-
         // Validate content hash
         if req.content_hash.len() != 32 {
             return proto::error_response(
@@ -82,6 +75,49 @@ impl MessageHandler {
                 "invalid content hash length".to_string(),
             );
         }
+
+        // Validate filename
+        if req.filename.is_empty() || req.filename.len() > 500 {
+            return proto::error_response(
+                request_id,
+                error_codes::INVALID_DATA,
+                "filename must be 1-500 characters".to_string(),
+            );
+        }
+
+        // Validate keywords
+        if req.keywords.len() > 50 {
+            return proto::error_response(
+                request_id,
+                error_codes::INVALID_DATA,
+                "too many keywords (max 50)".to_string(),
+            );
+        }
+        for keyword in &req.keywords {
+            if keyword.len() > 100 {
+                return proto::error_response(
+                    request_id,
+                    error_codes::INVALID_DATA,
+                    "keyword too long (max 100 chars)".to_string(),
+                );
+            }
+        }
+
+        // Validate nym_address
+        if req.nym_address.is_empty() || req.nym_address.len() > 500 {
+            return proto::error_response(
+                request_id,
+                error_codes::INVALID_DATA,
+                "invalid nym address".to_string(),
+            );
+        }
+
+        tracing::info!(
+            "Publish request: {} ({} bytes, {} chunks)",
+            req.filename,
+            req.size,
+            req.chunk_count
+        );
 
         let mut content_hash = [0u8; 32];
         content_hash.copy_from_slice(&req.content_hash);
@@ -127,7 +163,24 @@ impl MessageHandler {
 
     /// Handle a search request
     fn handle_search(&self, request_id: u64, req: SearchRequest) -> Envelope {
-        tracing::info!("Search request: '{}' (max {})", req.query, req.max_results);
+        // Validate query - must be non-empty and reasonable length
+        let query = req.query.trim();
+        if query.is_empty() {
+            return proto::error_response(
+                request_id,
+                error_codes::INVALID_DATA,
+                "search query cannot be empty".to_string(),
+            );
+        }
+        if query.len() > 1000 {
+            return proto::error_response(
+                request_id,
+                error_codes::INVALID_DATA,
+                "search query too long (max 1000 chars)".to_string(),
+            );
+        }
+
+        tracing::info!("Search request: '{}' (max {})", query, req.max_results);
 
         let max_results = if req.max_results == 0 || req.max_results > 100 {
             100
@@ -135,7 +188,7 @@ impl MessageHandler {
             req.max_results
         };
 
-        match self.index.search(&req.query, max_results) {
+        match self.index.search(query, max_results) {
             Ok(results) => {
                 tracing::info!("Found {} results", results.len());
 

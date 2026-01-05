@@ -243,7 +243,7 @@ impl Envelope {
         if envelope.version != PROTOCOL_VERSION as u32 {
             return Err(Error::VersionMismatch {
                 expected: PROTOCOL_VERSION,
-                actual: envelope.version as u8,
+                actual: envelope.version,
             });
         }
 
