@@ -114,10 +114,29 @@ impl SearchIndex {
         Ok(())
     }
 
+    /// Escape a query string for safe use with FTS5
+    ///
+    /// Wraps each word in double quotes to prevent FTS5 from interpreting
+    /// special characters (like hyphens, colons) as operators.
+    fn escape_fts_query(query: &str) -> String {
+        query
+            .split_whitespace()
+            .map(|word| {
+                // Escape any double quotes within the word and wrap in quotes
+                let escaped = word.replace('"', "\"\"");
+                format!("\"{}\"", escaped)
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     /// Search for entries matching a query
     ///
     /// Returns results with all known seeders aggregated for each file.
     pub fn search(&self, query: &str, max_results: u32) -> Result<Vec<SearchResult>> {
+        // Escape query for safe FTS5 usage
+        let safe_query = Self::escape_fts_query(query);
+
         // First get FTS matches with BM25 ranking, then join with seeders
         let mut stmt = self.conn.prepare(
             r#"
@@ -143,7 +162,7 @@ impl SearchIndex {
         )?;
 
         let results = stmt
-            .query_map(params![query, max_results], |row| {
+            .query_map(params![safe_query, max_results], |row| {
                 let hash_bytes: Vec<u8> = row.get(0)?;
                 let mut content_hash = [0u8; 32];
                 if hash_bytes.len() == 32 {
@@ -275,5 +294,56 @@ mod tests {
         assert_eq!(results[0].seeders.len(), 2);
         assert!(results[0].seeders.contains(&"seeder-one".to_string()));
         assert!(results[0].seeders.contains(&"seeder-two".to_string()));
+    }
+
+    #[test]
+    fn test_search_with_special_characters() {
+        let temp = NamedTempFile::new().unwrap();
+        let index = SearchIndex::open(temp.path()).unwrap();
+
+        let entry = IndexEntry {
+            content_hash: [3u8; 32],
+            filename: "test-file-with-hyphens.txt".to_string(),
+            keywords: vec!["test-keyword".to_string(), "another:colon".to_string()],
+            size: 1024,
+            chunk_count: 1,
+            published_at: 1000,
+            ttl: 3600,
+        };
+
+        index.upsert(&entry, "seeder").unwrap();
+
+        // Search with hyphenated query should work
+        let results = index.search("test-file", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].filename, "test-file-with-hyphens.txt");
+
+        // Search with colon should also work
+        let results = index.search("another:colon", 10).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_escape_fts_query() {
+        // Basic word
+        assert_eq!(SearchIndex::escape_fts_query("hello"), "\"hello\"");
+
+        // Hyphenated word
+        assert_eq!(SearchIndex::escape_fts_query("test-file"), "\"test-file\"");
+
+        // Multiple words
+        assert_eq!(
+            SearchIndex::escape_fts_query("hello world"),
+            "\"hello\" \"world\""
+        );
+
+        // Word with colon
+        assert_eq!(SearchIndex::escape_fts_query("file:name"), "\"file:name\"");
+
+        // Word with quotes (should be escaped)
+        assert_eq!(
+            SearchIndex::escape_fts_query("say \"hello\""),
+            "\"say\" \"\"\"hello\"\"\""
+        );
     }
 }
