@@ -5,10 +5,11 @@
 use anyhow::{anyhow, Result};
 use brisby_core::proto::{self, Envelope, Payload};
 use brisby_core::{chunk::verify_chunk, ContentHash, FileMetadata, NymAddress, Transport};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// Download state for tracking progress
 #[derive(Debug, Clone)]
@@ -210,6 +211,164 @@ impl<'a, T: Transport> Downloader<'a, T> {
         }
 
         progress_callback(total_chunks, total_chunks);
+        Ok(chunks)
+    }
+
+    /// Download all chunks for a file with parallel requests
+    ///
+    /// Sends up to `concurrency` chunk requests simultaneously and distributes
+    /// them across available seeders in round-robin fashion.
+    pub async fn download_parallel(
+        &self,
+        metadata: &FileMetadata,
+        seeders: &[NymAddress],
+        concurrency: usize,
+        progress_callback: impl Fn(u32, u32),
+    ) -> Result<Vec<(u32, Vec<u8>)>> {
+        if seeders.is_empty() {
+            return Err(anyhow!("No seeders available"));
+        }
+
+        let total_chunks = metadata.chunks.len() as u32;
+        if total_chunks == 0 {
+            return Ok(Vec::new());
+        }
+
+        let concurrency = concurrency.min(total_chunks as usize).max(1);
+        let timeout = Duration::from_secs(30);
+        let retry_limit = 3;
+
+        // Track state
+        let mut received_chunks: HashMap<u32, Vec<u8>> = HashMap::new();
+        let mut pending_chunks: HashSet<u32> = HashSet::new();
+        let mut next_chunk_to_request: u32 = 0;
+        let mut seeder_index: usize = 0;
+        let mut retry_counts: HashMap<u32, usize> = HashMap::new();
+
+        // Initial batch of requests
+        while pending_chunks.len() < concurrency && next_chunk_to_request < total_chunks {
+            let chunk_idx = next_chunk_to_request;
+            let seeder = &seeders[seeder_index % seeders.len()];
+
+            tracing::debug!(
+                "Requesting chunk {} from {} (parallel batch)",
+                chunk_idx,
+                seeder.as_str()
+            );
+
+            self.request_chunk(seeder, &metadata.content_hash, chunk_idx)
+                .await?;
+
+            pending_chunks.insert(chunk_idx);
+            next_chunk_to_request += 1;
+            seeder_index += 1;
+        }
+
+        // Receive loop with timeout tracking
+        let mut last_receive_time = Instant::now();
+
+        while received_chunks.len() < total_chunks as usize {
+            // Check for overall timeout (no progress)
+            if last_receive_time.elapsed() > timeout && !pending_chunks.is_empty() {
+                // Timeout - retry pending chunks
+                tracing::warn!(
+                    "Timeout waiting for chunks, {} pending, retrying...",
+                    pending_chunks.len()
+                );
+
+                // Collect chunks to retry
+                let chunks_to_retry: Vec<u32> = pending_chunks.iter().copied().collect();
+                pending_chunks.clear();
+
+                for chunk_idx in chunks_to_retry {
+                    let count = retry_counts.entry(chunk_idx).or_insert(0);
+                    *count += 1;
+
+                    if *count > retry_limit {
+                        return Err(anyhow!(
+                            "Failed to download chunk {} after {} retries",
+                            chunk_idx,
+                            retry_limit
+                        ));
+                    }
+
+                    // Retry with next seeder
+                    let seeder = &seeders[seeder_index % seeders.len()];
+                    tracing::debug!(
+                        "Retrying chunk {} from {} (attempt {})",
+                        chunk_idx,
+                        seeder.as_str(),
+                        count
+                    );
+
+                    self.request_chunk(seeder, &metadata.content_hash, chunk_idx)
+                        .await?;
+
+                    pending_chunks.insert(chunk_idx);
+                    seeder_index += 1;
+                }
+
+                last_receive_time = Instant::now();
+            }
+
+            // Try to receive a response (short timeout to stay responsive)
+            match self.receive_chunk(Duration::from_millis(500)).await {
+                Ok(Some((chunk_idx, data, content_hash))) => {
+                    if content_hash != metadata.content_hash {
+                        tracing::warn!(
+                            "Received chunk {} with wrong content hash, ignoring",
+                            chunk_idx
+                        );
+                        continue;
+                    }
+
+                    if received_chunks.contains_key(&chunk_idx) {
+                        tracing::debug!("Received duplicate chunk {}, ignoring", chunk_idx);
+                        continue;
+                    }
+
+                    // Store the chunk
+                    received_chunks.insert(chunk_idx, data);
+                    pending_chunks.remove(&chunk_idx);
+                    last_receive_time = Instant::now();
+
+                    progress_callback(received_chunks.len() as u32, total_chunks);
+
+                    tracing::debug!(
+                        "Received chunk {} ({}/{})",
+                        chunk_idx,
+                        received_chunks.len(),
+                        total_chunks
+                    );
+
+                    // Send next request if we have more chunks to request
+                    while pending_chunks.len() < concurrency
+                        && next_chunk_to_request < total_chunks
+                    {
+                        let chunk_idx = next_chunk_to_request;
+                        let seeder = &seeders[seeder_index % seeders.len()];
+
+                        self.request_chunk(seeder, &metadata.content_hash, chunk_idx)
+                            .await?;
+
+                        pending_chunks.insert(chunk_idx);
+                        next_chunk_to_request += 1;
+                        seeder_index += 1;
+                    }
+                }
+                Ok(None) => {
+                    // Short timeout, continue loop
+                }
+                Err(e) => {
+                    tracing::debug!("Error receiving chunk: {}", e);
+                }
+            }
+        }
+
+        // Convert to sorted vec
+        let mut chunks: Vec<(u32, Vec<u8>)> = received_chunks.into_iter().collect();
+        chunks.sort_by_key(|(idx, _)| *idx);
+
         Ok(chunks)
     }
 

@@ -70,7 +70,7 @@ enum Commands {
         #[arg(short, long)]
         output: Option<String>,
 
-        /// Seeder Nym address(es) to download from
+        /// Seeder Nym address(es) to download from (can specify multiple for parallel downloads)
         #[arg(short, long, required = true)]
         seeder: Vec<String>,
 
@@ -85,6 +85,10 @@ enum Commands {
         /// Expected file size
         #[arg(long)]
         size: Option<u64>,
+
+        /// Number of parallel chunk requests (default: 4, max: 16)
+        #[arg(short, long, default_value = "4")]
+        parallel: usize,
     },
 
     /// List locally shared files
@@ -142,7 +146,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Download { hash, output, seeder, chunks, filename, size } => {
+        Commands::Download { hash, output, seeder, chunks, filename, size, parallel } => {
             download_file(
                 &hash,
                 output.as_deref(),
@@ -150,6 +154,7 @@ async fn main() -> Result<()> {
                 chunks,
                 filename.as_deref(),
                 size,
+                parallel.min(16), // Cap at 16 parallel requests
                 cli.mock,
                 &cli.data_dir,
             )
@@ -313,6 +318,7 @@ async fn download_file(
     chunk_count: u32,
     filename: Option<&str>,
     size: Option<u64>,
+    parallel: usize,
     use_mock: bool,
     data_dir: &str,
 ) -> Result<()> {
@@ -327,7 +333,7 @@ async fn download_file(
     let output_path = Path::new(output.unwrap_or(output_filename));
 
     tracing::info!("Downloading: {}", hash);
-    tracing::info!("From {} seeder(s)", seeders.len());
+    tracing::info!("From {} seeder(s) with {} parallel requests", seeders.len(), parallel);
     tracing::info!("Output: {}", output_path.display());
 
     if use_mock {
@@ -339,6 +345,8 @@ async fn download_file(
     #[cfg(feature = "nym")]
     {
         use brisby_core::{ChunkInfo, FileMetadata, NymTransport};
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::Instant;
 
         let content_hash = brisby_core::hex_to_hash(hash)
             .map_err(|e| anyhow::anyhow!("Invalid hash: {}", e))?;
@@ -392,19 +400,47 @@ async fn download_file(
 
         let dl = downloader::Downloader::new(&transport);
 
-        println!("Downloading {} chunks from {} seeder(s)...", chunk_count, seeders.len());
+        println!(
+            "Downloading {} chunks from {} seeder(s) ({} parallel requests)...",
+            chunk_count,
+            seeders.len(),
+            parallel
+        );
+
+        let start_time = Instant::now();
+        let last_printed = AtomicU32::new(0);
 
         let chunks = dl
-            .download_sequential(&metadata, &seeder_addresses, |current, total| {
-                if current % 10 == 0 || current == total {
+            .download_parallel(&metadata, &seeder_addresses, parallel, |current, total| {
+                // Only print every 5 chunks or at completion to reduce noise
+                let last = last_printed.load(Ordering::Relaxed);
+                if current >= last + 5 || current == total {
                     println!("Progress: {}/{} chunks", current, total);
+                    last_printed.store(current, Ordering::Relaxed);
                 }
             })
             .await?;
 
+        let elapsed = start_time.elapsed();
+
         dl.reassemble_to_file(chunks, &metadata, output_path)?;
 
-        println!("Downloaded successfully: {}", output_path.display());
+        let size_bytes = size.unwrap_or(0);
+        if size_bytes > 0 {
+            let speed_kbps = (size_bytes as f64 / 1024.0) / elapsed.as_secs_f64();
+            println!(
+                "Downloaded successfully: {} ({:.1} KB/s, {:.1}s)",
+                output_path.display(),
+                speed_kbps,
+                elapsed.as_secs_f64()
+            );
+        } else {
+            println!(
+                "Downloaded successfully: {} ({:.1}s)",
+                output_path.display(),
+                elapsed.as_secs_f64()
+            );
+        }
 
         transport.disconnect().await?;
 
@@ -414,7 +450,7 @@ async fn download_file(
     #[cfg(not(feature = "nym"))]
     {
         // Suppress unused variable warnings in non-nym build
-        let _ = (&seeders, &chunk_count, &filename, &size, &data_dir);
+        let _ = (&seeders, &chunk_count, &filename, &size, &parallel, &data_dir);
         anyhow::bail!("Nym transport not available. Compile with --features nym or use --mock");
     }
 }
