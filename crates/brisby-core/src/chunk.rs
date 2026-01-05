@@ -17,7 +17,7 @@ pub fn chunk_file(path: &Path) -> Result<(FileMetadata, Vec<Vec<u8>>)> {
     let mut reader = std::io::BufReader::new(file);
     let mut chunks_data = Vec::new();
     let mut chunks_info = Vec::new();
-    let mut chunk_hashes = Vec::new();
+    let mut content_hasher = blake3::Hasher::new();
     let mut index = 0u32;
 
     loop {
@@ -34,7 +34,8 @@ pub fn chunk_file(path: &Path) -> Result<(FileMetadata, Vec<Vec<u8>>)> {
         let chunk_hash = blake3::hash(&buffer);
         let hash: ContentHash = *chunk_hash.as_bytes();
 
-        chunk_hashes.push(hash);
+        // Feed the full file hasher with raw bytes
+        content_hasher.update(&buffer);
         chunks_info.push(ChunkInfo {
             index,
             hash,
@@ -45,12 +46,8 @@ pub fn chunk_file(path: &Path) -> Result<(FileMetadata, Vec<Vec<u8>>)> {
         index += 1;
     }
 
-    // Compute file hash from concatenated chunk hashes
-    let mut hasher = blake3::Hasher::new();
-    for hash in &chunk_hashes {
-        hasher.update(hash);
-    }
-    let content_hash: ContentHash = *hasher.finalize().as_bytes();
+    // Compute file hash from the full file contents
+    let content_hash: ContentHash = *content_hasher.finalize().as_bytes();
 
     let keywords = FileMetadata::extract_keywords(&filename);
 
@@ -176,6 +173,18 @@ mod tests {
         // Verify
         let reassembled = std::fs::read(output.path()).unwrap();
         assert_eq!(reassembled, test_data);
+    }
+
+    #[test]
+    fn test_content_hash_matches_raw_data() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        let test_data = b"hash-me-now";
+        temp_file.write_all(test_data).unwrap();
+
+        let (metadata, _) = chunk_file(temp_file.path()).unwrap();
+
+        let expected = blake3::hash(test_data);
+        assert_eq!(metadata.content_hash, *expected.as_bytes());
     }
 
     #[test]

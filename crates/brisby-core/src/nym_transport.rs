@@ -6,7 +6,7 @@
 
 use crate::transport::{NymAddress, ReceivedMessage, SenderTag, Transport, TransportConfig};
 use crate::{Error, Result};
-use nym_sdk::mixnet::{self, MixnetClient, MixnetMessageSender, ReconstructedMessage};
+use nym_sdk::mixnet::{self, IncludedSurbs, MixnetClient, MixnetMessageSender, ReconstructedMessage};
 use std::convert::TryInto;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -114,10 +114,13 @@ impl Transport for NymTransport {
             .parse()
             .map_err(|e: mixnet::RecipientFormattingError| Error::InvalidAddress(e.to_string()))?;
 
+        // Always include at least one SURB so the receiver can reply
+        let surbs = IncludedSurbs::new(self.config.surbs_per_message.max(1));
+
         client
             .lock()
             .await
-            .send_plain_message(recipient_addr, data)
+            .send_message(recipient_addr, data, surbs)
             .await
             .map_err(|e| Error::SendFailed(e.to_string()))?;
 

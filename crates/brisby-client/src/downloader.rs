@@ -235,8 +235,8 @@ impl<'a, T: Transport> Downloader<'a, T> {
             total_written += data.len() as u64;
         }
 
-        // Verify total size
-        if total_written != metadata.size {
+        // Verify total size if the metadata included it
+        if metadata.size != 0 && total_written != metadata.size {
             return Err(anyhow!(
                 "Size mismatch: expected {} bytes, wrote {} bytes",
                 metadata.size,
@@ -306,5 +306,36 @@ mod tests {
         // Should not error when sending request
         let result = downloader.request_chunk(&seeder, &content_hash, 0).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_reassemble_allows_unknown_sizes() {
+        let mut transport = MockTransport::new();
+        transport.connect().await.unwrap();
+        let downloader = Downloader::new(&transport);
+
+        let data = b"short-file";
+        let content_hash = *blake3::hash(data).as_bytes();
+        let metadata = FileMetadata {
+            content_hash,
+            filename: "short.txt".to_string(),
+            size: 0, // unknown total size
+            mime_type: None,
+            chunks: vec![brisby_core::ChunkInfo {
+                index: 0,
+                hash: content_hash, // not used in reassemble_to_file, but provide something consistent
+                size: 0, // unknown chunk size
+            }],
+            keywords: vec![],
+            created_at: 0,
+        };
+
+        let output = tempfile::NamedTempFile::new().unwrap();
+        downloader
+            .reassemble_to_file(vec![(0, data.to_vec())], &metadata, output.path())
+            .unwrap();
+
+        let written = std::fs::read(output.path()).unwrap();
+        assert_eq!(written, data);
     }
 }

@@ -335,18 +335,32 @@ async fn download_file(
 
         // Create a minimal FileMetadata for the downloader
         // In a real scenario, we'd get full metadata from the index provider
+        let size_hint = size.unwrap_or(0);
+        let chunk_entries: Vec<ChunkInfo> = (0..chunk_count)
+            .map(|i| {
+                // If we know the total size, derive per-chunk sizes; otherwise mark as unknown (0)
+                let chunk_size = if size_hint > 0 {
+                    let offset = i as u64 * brisby_core::CHUNK_SIZE as u64;
+                    let remaining = size_hint.saturating_sub(offset);
+                    remaining.min(brisby_core::CHUNK_SIZE as u64) as u32
+                } else {
+                    0
+                };
+
+                ChunkInfo {
+                    index: i,
+                    hash: [0u8; 32], // We verify chunks by their own hash in the response
+                    size: chunk_size,
+                }
+            })
+            .collect();
+
         let metadata = FileMetadata {
             content_hash,
             filename: output_filename.to_string(),
-            size: size.unwrap_or(chunk_count as u64 * brisby_core::CHUNK_SIZE as u64),
+            size: size_hint,
             mime_type: None,
-            chunks: (0..chunk_count)
-                .map(|i| ChunkInfo {
-                    index: i,
-                    hash: [0u8; 32], // We verify chunks by their own hash in the response
-                    size: brisby_core::CHUNK_SIZE as u32,
-                })
-                .collect(),
+            chunks: chunk_entries,
             keywords: vec![],
             created_at: 0,
         };
