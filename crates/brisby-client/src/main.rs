@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod config;
+mod downloader;
 mod local_index;
 
 #[derive(Parser)]

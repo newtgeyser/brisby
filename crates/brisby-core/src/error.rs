@@ -30,6 +30,21 @@ pub enum Error {
 
     #[error("Invalid data: {0}")]
     InvalidData(String),
+
+    #[error("Transport error: {0}")]
+    Transport(String),
+
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+
+    #[error("Send failed: {0}")]
+    SendFailed(String),
+
+    #[error("Receive failed: {0}")]
+    ReceiveFailed(String),
+
+    #[error("Invalid address: {0}")]
+    InvalidAddress(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -9,14 +9,16 @@ description = "Brisby index provider server"
 name = "brisby-index"
 path = "src/main.rs"
 
+[features]
+default = []
+# Enable real Nym SDK integration
+nym = ["brisby-core/nym"]
+
 [dependencies]
 brisby-core = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
-
-# Nym SDK - TODO: enable when integrating
-# nym-sdk = { workspace = true }
 
 # Database
 rusqlite = { workspace = true }

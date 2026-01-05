@@ -9,15 +9,17 @@ description = "Brisby P2P file sharing client"
 name = "brisby"
 path = "src/main.rs"
 
+[features]
+default = []
+# Enable real Nym SDK integration
+nym = ["brisby-core/nym"]
+
 [dependencies]
 brisby-core = { workspace = true }
 brisby-dht = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
-
-# Nym SDK - TODO: enable when integrating
-# nym-sdk = { workspace = true }
 
 # Database
 rusqlite = { workspace = true }
