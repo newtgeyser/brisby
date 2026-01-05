@@ -10,6 +10,7 @@ mod config;
 mod downloader;
 mod local_index;
 mod network;
+mod seeder;
 
 #[derive(Parser)]
 #[command(name = "brisby")]
@@ -94,6 +95,17 @@ enum Commands {
 
     /// Initialize configuration
     Init,
+
+    /// Start seeding (serve files to other peers)
+    Seed {
+        /// Files to share (optional, loads all from storage if not specified)
+        #[arg(short, long)]
+        file: Vec<String>,
+
+        /// Also publish to index provider
+        #[arg(short, long)]
+        publish: bool,
+    },
 }
 
 #[tokio::main]
@@ -147,6 +159,16 @@ async fn main() -> Result<()> {
         }
         Commands::Init => {
             init_config().await?;
+        }
+        Commands::Seed { file, publish } => {
+            start_seeding(
+                &file,
+                publish,
+                cli.index_provider.as_deref(),
+                cli.mock,
+                &cli.data_dir,
+            )
+            .await?;
         }
     }
 
@@ -369,6 +391,115 @@ async fn download_file(
     {
         // Suppress unused variable warnings in non-nym build
         let _ = (&seeders, &chunk_count, &filename, &size, &data_dir);
+        anyhow::bail!("Nym transport not available. Compile with --features nym or use --mock");
+    }
+}
+
+async fn start_seeding(
+    files: &[String],
+    publish: bool,
+    index_provider: Option<&str>,
+    use_mock: bool,
+    data_dir: &str,
+) -> Result<()> {
+    use std::path::Path;
+
+    let data_path = expand_path(data_dir);
+    std::fs::create_dir_all(&data_path)?;
+    let chunks_dir = data_path.join("chunks");
+
+    // Create chunk store and load existing files
+    let mut store = seeder::ChunkStore::new(chunks_dir);
+    let loaded = store.load_all()?;
+    tracing::info!("Loaded {} existing files from storage", loaded);
+
+    // Add any new files
+    for file_path in files {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            tracing::warn!("File not found: {}", file_path);
+            continue;
+        }
+        match store.add_file(path) {
+            Ok(metadata) => {
+                println!("Added: {} ({})", metadata.filename, brisby_core::hash_to_hex(&metadata.content_hash));
+            }
+            Err(e) => {
+                tracing::error!("Failed to add {}: {}", file_path, e);
+            }
+        }
+    }
+
+    let file_count = store.list_files().len();
+    if file_count == 0 {
+        println!("No files to seed. Use -f <file> to add files.");
+        return Ok(());
+    }
+
+    println!("Seeding {} file(s)", file_count);
+    for metadata in store.list_files() {
+        println!("  - {} ({} bytes, {} chunks)",
+            metadata.filename,
+            metadata.size,
+            metadata.chunks.len()
+        );
+    }
+
+    if use_mock {
+        println!("Mock mode: seeder would start here");
+        println!("(No real network connection in mock mode)");
+        return Ok(());
+    }
+
+    #[cfg(feature = "nym")]
+    {
+        use brisby_core::NymTransport;
+
+        let nym_path = data_path.join("nym");
+        std::fs::create_dir_all(&nym_path)?;
+
+        tracing::info!("Connecting to Nym network...");
+        let mut transport = NymTransport::with_storage(nym_path);
+        transport.connect().await?;
+
+        let our_address = transport.our_address()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get our Nym address"))?;
+
+        println!("Connected to Nym network");
+        println!("Address: {}", our_address);
+        println!();
+        println!("Seeder is running. Press Ctrl+C to stop.");
+
+        // Publish to index provider if requested
+        if publish {
+            if let Some(index_addr) = index_provider {
+                let index_nym = brisby_core::NymAddress::new(index_addr);
+                let our_nym = our_address.clone();
+
+                for metadata in store.list_files() {
+                    tracing::info!("Publishing {} to index provider", metadata.filename);
+                    if let Err(e) = network::publish_to_index_provider(&transport, &index_nym, metadata, &our_nym).await {
+                        tracing::error!("Failed to publish {}: {}", metadata.filename, e);
+                    } else {
+                        println!("Published: {}", metadata.filename);
+                    }
+                }
+            } else {
+                tracing::warn!("--publish specified but no --index-provider given");
+            }
+        }
+
+        // Create seeder and run message loop
+        let seeder_service = seeder::Seeder::new(store);
+        seeder::run_seeder_loop(&transport, &seeder_service).await?;
+
+        transport.disconnect().await?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "nym"))]
+    {
+        let _ = (&index_provider, &publish, &data_dir);
         anyhow::bail!("Nym transport not available. Compile with --features nym or use --mock");
     }
 }
