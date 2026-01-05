@@ -1,0 +1,17 @@
+[package]
+name = "brisby-dht"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Kademlia DHT implementation for Brisby"
+
+[dependencies]
+brisby-core = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bitvec = { workspace = true }

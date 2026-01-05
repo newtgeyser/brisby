@@ -1,0 +1,27 @@
+[package]
+name = "brisby-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types, protocols, and utilities for Brisby P2P file sharing"
+
+[dependencies]
+# Serialization
+prost = { workspace = true }
+serde = { workspace = true }
+
+# Hashing
+blake3 = { workspace = true }
+
+# Utilities
+thiserror = { workspace = true }
+bytes = { workspace = true }
+hex = { workspace = true }
+bitvec = { workspace = true }
+
+# prost-build requires protoc, skip for now
+# [build-dependencies]
+# prost-build = "0.13"
+
+[dev-dependencies]
+tempfile = "3"

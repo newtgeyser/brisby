@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/brisby-core",
+    "crates/brisby-client",
+    "crates/brisby-index",
+    "crates/brisby-dht",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/brisby/brisby"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Nym SDK (from git, not on crates.io)
+# Uncomment when integrating Nym - large dependency tree, slow to compile
+# nym-sdk = { git = "https://github.com/nymtech/nym.git", tag = "nym-binaries-v2025.21-mozzarella" }
+
+# Serialization
+prost = "0.13"
+prost-types = "0.13"
+
+# Database (bundled SQLite includes FTS5)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Hashing
+blake3 = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Utilities
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+bytes = "1"
+hex = "0.4"
+bitvec = "1"
+
+# Internal crates
+brisby-core = { path = "crates/brisby-core" }
+brisby-dht = { path = "crates/brisby-dht" }
