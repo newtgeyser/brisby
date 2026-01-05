@@ -1,12 +1,15 @@
 //! Brisby - Privacy-preserving P2P file sharing client
 
 use anyhow::Result;
+use brisby_core::Transport;
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod config;
 mod downloader;
 mod local_index;
+mod network;
 
 #[derive(Parser)]
 #[command(name = "brisby")]
@@ -19,6 +22,18 @@ struct Cli {
     /// Enable verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Index provider Nym address (overrides config)
+    #[arg(long)]
+    index_provider: Option<String>,
+
+    /// Use mock transport (for testing without Nym)
+    #[arg(long)]
+    mock: bool,
+
+    /// Data directory
+    #[arg(short, long, default_value = "~/.brisby")]
+    data_dir: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -86,7 +101,14 @@ async fn main() -> Result<()> {
             share_file(&file).await?;
         }
         Commands::Search { query, max_results } => {
-            search_files(&query, max_results).await?;
+            search_files(
+                &query,
+                max_results,
+                cli.index_provider.as_deref(),
+                cli.mock,
+                &cli.data_dir,
+            )
+            .await?;
         }
         Commands::Download { hash, output } => {
             download_file(&hash, output.as_deref()).await?;
@@ -135,17 +157,90 @@ async fn share_file(path: &str) -> Result<()> {
     Ok(())
 }
 
-async fn search_files(query: &str, max_results: u32) -> Result<()> {
+async fn search_files(
+    query: &str,
+    max_results: u32,
+    index_provider: Option<&str>,
+    use_mock: bool,
+    data_dir: &str,
+) -> Result<()> {
+    let index_provider = index_provider
+        .ok_or_else(|| anyhow::anyhow!("Index provider address required. Use --index-provider"))?;
+
     tracing::info!("Searching for: {} (max {} results)", query, max_results);
+    tracing::info!("Index provider: {}", index_provider);
 
-    // TODO: Connect to Nym
-    // TODO: Query index providers
-    // TODO: Merge and display results
+    let index_addr = brisby_core::NymAddress::new(index_provider);
 
-    println!("Search functionality not yet implemented");
-    println!("Query: {}", query);
+    if use_mock {
+        // Use mock transport
+        let mut transport = brisby_core::transport::mock::MockTransport::new();
+        transport.connect().await?;
+        tracing::info!("Connected (mock mode)");
+
+        println!("Mock mode: would search for '{}' on {}", query, index_provider);
+        println!("(No real network connection in mock mode)");
+    } else {
+        // Real Nym transport
+        #[cfg(feature = "nym")]
+        {
+            use brisby_core::NymTransport;
+
+            let data_path = expand_path(data_dir);
+            std::fs::create_dir_all(&data_path)?;
+            let nym_path = data_path.join("nym");
+
+            tracing::info!("Connecting to Nym network...");
+            let mut transport = NymTransport::with_storage(nym_path);
+            transport.connect().await?;
+
+            tracing::info!("Connected to Nym network");
+            if let Some(addr) = transport.our_address() {
+                tracing::info!("Our address: {}", addr);
+            }
+
+            // Perform search
+            tracing::info!("Sending search query...");
+            let results = network::search_index_provider(&transport, &index_addr, query, max_results).await?;
+
+            if results.is_empty() {
+                println!("No results found for '{}'", query);
+            } else {
+                println!("Found {} results for '{}':", results.len(), query);
+                println!();
+                for (i, result) in results.iter().enumerate() {
+                    println!(
+                        "{}. {} ({} bytes, {} chunks)",
+                        i + 1,
+                        result.filename,
+                        result.size,
+                        result.chunk_count
+                    );
+                    println!("   Hash: {}", brisby_core::hash_to_hex(&result.content_hash));
+                    println!("   Relevance: {:.2}", result.relevance);
+                    println!();
+                }
+            }
+
+            transport.disconnect().await?;
+        }
+
+        #[cfg(not(feature = "nym"))]
+        {
+            anyhow::bail!("Nym transport not available. Compile with --features nym or use --mock");
+        }
+    }
 
     Ok(())
+}
+
+fn expand_path(path: &str) -> PathBuf {
+    if path.starts_with("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(&path[2..]);
+        }
+    }
+    PathBuf::from(path)
 }
 
 async fn download_file(hash: &str, output: Option<&str>) -> Result<()> {
