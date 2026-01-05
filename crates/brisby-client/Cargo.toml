@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Brisby P2P file sharing client"
 
+[lib]
+name = "brisby_client"
+path = "src/lib.rs"
+
 [[bin]]
 name = "brisby"
 path = "src/main.rs"
