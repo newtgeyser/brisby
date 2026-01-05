@@ -241,9 +241,9 @@ async fn search_files(
         {
             use brisby_core::NymTransport;
 
-            let data_path = expand_path(data_dir);
-            std::fs::create_dir_all(&data_path)?;
-            let nym_path = data_path.join("nym");
+            // Use a temporary directory for Nym storage to avoid conflicts with seeder
+            let temp_dir = tempfile::tempdir()?;
+            let nym_path = temp_dir.path().join("nym");
 
             tracing::info!("Connecting to Nym network...");
             let mut transport = NymTransport::with_storage(nym_path);
@@ -274,7 +274,10 @@ async fn search_files(
                     println!("   Hash: {}", brisby_core::hash_to_hex(&result.content_hash));
                     println!("   Relevance: {:.2}", result.relevance);
                     if !result.seeders.is_empty() {
-                        println!("   Seeders: {}", result.seeders.len());
+                        println!("   Seeders:");
+                        for seeder in &result.seeders {
+                            println!("     - {}", seeder);
+                        }
                     }
                     println!();
                 }
@@ -372,9 +375,9 @@ async fn download_file(
             created_at: 0,
         };
 
-        let data_path = expand_path(data_dir);
-        std::fs::create_dir_all(&data_path)?;
-        let nym_path = data_path.join("nym");
+        // Use a temporary directory for Nym storage to avoid conflicts with seeder
+        let temp_dir = tempfile::tempdir()?;
+        let nym_path = temp_dir.path().join("nym");
 
         tracing::info!("Connecting to Nym network...");
         let mut transport = NymTransport::with_storage(nym_path);

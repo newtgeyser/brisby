@@ -191,7 +191,7 @@ start_seeder() {
         return 0
     fi
 
-    "$BRISBY" --index-provider "$INDEX_ADDR" -d "$SEEDER_DIR" seed -f "$TEST_FILE" -p > "$SEEDER_LOG" 2>&1 &
+    "$BRISBY" -d "$SEEDER_DIR" seed -f "$TEST_FILE" -p --index-provider "$INDEX_ADDR" > "$SEEDER_LOG" 2>&1 &
     SEEDER_PID=$!
 
     log_info "Waiting for seeder to connect to Nym (up to ${NYM_TIMEOUT}s)..."
@@ -225,7 +225,7 @@ test_search() {
 
     if $USE_MOCK; then
         log_info "Mock mode - testing search in mock mode"
-        "$BRISBY" --mock --index-provider "mock-index" -d "$CLIENT_DIR" search "test"
+        "$BRISBY" --mock -d "$CLIENT_DIR" search "test" --index-provider "mock-index"
         log_success "Search mock test passed"
         return 0
     fi
@@ -236,7 +236,7 @@ test_search() {
 
     log_info "Searching for 'test-file'..."
 
-    SEARCH_OUTPUT=$("$BRISBY" --index-provider "$INDEX_ADDR" -d "$CLIENT_DIR" search "test-file" 2>&1) || true
+    SEARCH_OUTPUT=$("$BRISBY" -d "$CLIENT_DIR" search "test-file" --index-provider "$INDEX_ADDR" 2>&1) || true
 
     echo "$SEARCH_OUTPUT"
 

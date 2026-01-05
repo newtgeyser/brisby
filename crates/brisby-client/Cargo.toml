@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 default = []
 # Enable real Nym SDK integration
-nym = ["brisby-core/nym"]
+nym = ["brisby-core/nym", "tempfile"]
 
 [dependencies]
 brisby-core = { workspace = true }
