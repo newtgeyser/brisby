@@ -42,7 +42,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Share a file on the network
+    /// Pre-process a file so seed can share it with other peers
     Share {
         /// Path to the file to share
         #[arg(required = true)]
@@ -96,7 +96,7 @@ enum Commands {
     /// Initialize configuration
     Init,
 
-    /// Start seeding (serve files to other peers)
+    /// Start seeding (make available for download) previously shared files
     Seed {
         /// Files to share (optional, loads all from storage if not specified)
         #[arg(short, long)]

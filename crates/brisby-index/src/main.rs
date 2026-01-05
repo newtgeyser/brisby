@@ -21,7 +21,7 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(3600);
 #[command(about = "Brisby index provider server", long_about = None)]
 struct Cli {
     /// Path to data directory
-    #[arg(short, long, default_value = ".brisby-index")]
+    #[arg(short, long, default_value = ".brisby/index")]
     data_dir: PathBuf,
 
     /// Enable verbose output
